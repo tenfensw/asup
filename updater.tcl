@@ -37,8 +37,18 @@ namespace eval asup {
                            USE_TK 0 \
                            \
                            WM_TITLE_TK "Ascention Updater" \
-                           WM_PADX_TK 5 \
-                           WM_PADY_TK 5]
+                           \
+                           #WM_W_TK 324 \
+                           #WM_H_TK 302 \
+                           WM_W_TK 486 \
+                           WM_H_TK 453 \
+                           \
+                           WM_L_TK 12 \
+                           \
+                           WM_FONT_FAMILY_TK Helvetica \
+                           WM_FONT_SIZE_TK 14 \
+                           \
+                           WM_FONT_PADX_TK 10]
     array set config [list CURRENT_USER_AGENT "asup/v$config(CURRENT_VERSION)"]
 
     proc config_from_argv {argv} {
