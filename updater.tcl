@@ -405,19 +405,25 @@ namespace eval asup {
     }
 
     proc show_error {args} {
-        if {[is_win32]} {
-            puts stderr "error:"
-            puts stderr [join $args {}]
-            puts stderr {}
-            gets
+        if {$config(USE_TK)} {
+            ui::show_alert [join $args { }]
+            exit 1
         } else {
             return -code error [join $args { }]
         }
     }
 
     proc show_help {} {
-        puts stderr [join [list "Usage: $::argv0" \
-                                {[-N] [-P<package name>] [-h]}] { }]
+        set str [join [list "Usage: $::argv0" \
+                            {[-N] [-P<package name>] [-h]}] { }]
+
+        variable config
+
+        if {$config(USE_TK)} {
+            ui::show_alert $str
+        } else {
+            puts stderr $str
+        }
     }
 
     proc get_index_json {} {
