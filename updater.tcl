@@ -38,8 +38,6 @@ namespace eval asup {
                            \
                            WM_TITLE_TK "Ascention Updater" \
                            \
-                           #WM_W_TK 324 \
-                           #WM_H_TK 302 \
                            WM_W_TK 486 \
                            WM_H_TK 453 \
                            \
@@ -133,21 +131,22 @@ namespace eval asup {
             set root [file dirname $::argv0]
             set prefix_root [join [list $root Library TenFen] /]
 
+            set config_path [join [list $root updater.ini] /]
+
             set curl_path [join [list $prefix_root cURL 7.88.1 bin curl.exe] /]
             set tar_path [join [list $prefix_root BSDtar bin bsdtar.exe] /]
 
             set shasum_path [join [list $prefix_root sha1sum.exe] /]
 
-            set current_root [join [list $::env(APPDATA) Ascention Pixelmon] /]
-            set java_path [join [list $current_root Java jre-1.8 bin java.exe] /]
+            set current_root [join [list $::env(APPDATA) Ascention] /]
 
             array set config [list CURL_PATH [file nativename $curl_path] \
                                    TAR_PATH [file nativename $tar_path] \
                                    \
                                    SHASUM_PATH [file nativename $shasum_path] \
-                                   JAVA_PATH [file nativename $java_path] \
                                    \
                                    CURRENT_ROOT [file nativename $current_root] \
+                                   CONFIG_PATH [file nativename $config_path] \
                                    \
                                    CURRENT_OS win32]
         }
@@ -156,6 +155,32 @@ namespace eval asup {
     proc is_win32 {} {
         variable config
         return [regexp -nocase {^win*} $config(CURRENT_OS)]
+    }
+
+    proc is_macos {} {
+        variable config
+        return [regexp -nocase {^(darwin|macos|osx)$} $config(CURRENT_OS)]
+    }
+
+    proc adapt_config_for_macos {} {
+        variable config
+
+        if {[is_macos]} {
+            # we place config files and default packages root into macOS
+            # native user directories
+            set current_root [join [list $::env(HOME) Library \
+                                         {Application Support} \
+                                         Ascention] /]
+            set config_path [join [list $::env(HOME) Library \
+                                        Preferences Ascention.ini] /]
+
+            # most other config options are relevant for macOS without
+            # any additional modifications
+            array set config [list CONFIG_PATH $config_path \
+                                   CURRENT_ROOT $current_root \
+                                   \
+                                   CURRENT_OS darwin]
+        }
     }
 
     # obtains CPU arch from machine name
@@ -313,10 +338,17 @@ namespace eval asup {
 
     proc find_jre8 {} {
         variable config
+
+        set bundled_jvm_path [join [list $config(CURRENT_ROOT) Java bin java] /]
         set path {/usr/bin/java}
 
         if {[is_win32]} {
             set path {C:/Program Files/Java/jre-1.8/bin/java.exe}
+            append bundled_jvm_path {.exe}
+        }
+
+        if {[file isfile $bundled_jvm_path]} {
+            set path $bundled_jvm_path
         }
 
         if {[info exists config(JAVA_PATH)]} {
@@ -405,6 +437,8 @@ namespace eval asup {
     }
 
     proc show_error {args} {
+        variable config
+
         if {$config(USE_TK)} {
             ui::show_alert [join $args { }]
             exit 1
@@ -665,18 +699,17 @@ namespace eval asup {
         set launch_block [dict get $index_json $name launch]
         set launch_via [dict get $launch_block via]
 
-        if {$launch_via != {jre8}} {
-            # TODO: support other means of execution
-            return -code error "unknown launch type - \"$launch_via\""
-        }
-
         set launch_argv {}
         set launch_jvm [find_jre8]
 
-        if {[dict exists $launch_block argv]} {
-            # all the passed in CLI arguments must be interpolated
-            foreach arg [dict get $launch_block argv] {
-                lappend launch_argv [interpolate_launch_string $arg]
+        foreach potential_argv_list [list argv \
+                                          [join [list argv $config(CURRENT_OS)] :] \
+                                          [join [list argv $config(CURRENT_OS) $config(CURRENT_ARCH)] :]] {
+            if {[dict exists $launch_block $potential_argv_list]} {
+                # all the passed in CLI arguments must be interpolated
+                foreach arg [dict get $launch_block $potential_argv_list] {
+                    lappend launch_argv [interpolate_launch_string $arg]
+                }
             }
         }
 
@@ -741,8 +774,12 @@ namespace eval asup {
     }
 }
 
+# on macOS, different directories are used for packages root and config files
+# by default
+asup::adapt_config_for_macos
 # on Micro$oft's OS, we bundle our own binaries for many UNIX tools
 asup::adapt_config_for_win32
+
 # guess in-game username from the OS
 asup::guess_username
 
