@@ -22,7 +22,7 @@ namespace eval asup {
                            SHASUM_PATH "/usr/bin/shasum" \
                            \
                            CURRENT_ROOT "/tmp/aa" \
-                           CURRENT_VERSION {2023.08.02.2} \
+                           CURRENT_VERSION {2023.08.02.3} \
                            \
                            INDEX_JSON "https://valche.fun/asup/index.json" \
                            VAR_SPECIALS {_} \
@@ -367,15 +367,18 @@ namespace eval asup {
     }
 
     proc combine_jvm_classpath {path} {
-        if {! [file isfile $path]} {
-            return -code error "cannot combine JVM classpath - no such file - \"$path\""
-        }
-
-        variable config
         set sep :
 
         if {[is_win32]} {
             set sep {;}
+        }
+
+        if {$path == {-}} {
+            return $sep
+        }
+
+        if {! [file isfile $path]} {
+            return -code error "cannot combine JVM classpath - no such file - \"$path\""
         }
 
         set path_root [file dirname $path]
@@ -555,8 +558,10 @@ namespace eval asup {
             puts stderr "arch: $arch"
 
             # if the package is for our OS and platform, we can download it
-            if {$os == $config(CURRENT_OS) &&
-                $arch == $config(CURRENT_ARCH)} {
+            if {[string equal -nocase $os $config(CURRENT_OS)] &&
+                [string equal -nocase $arch [get_arch $config(CURRENT_ARCH)]]} {
+                puts stderr "eligible for download"
+
                 set path [join [list $config(CURRENT_ROOT) [file tail $uri]] /]
                 set path_sha1 [join [list $path sha1] .]
 
@@ -574,6 +579,8 @@ namespace eval asup {
                 } else {
                     set do_force_redownload 1
                 }
+
+                puts stderr "do_force_redownload = $do_force_redownload"
 
                 if {$do_force_redownload} {
                     # download it first
@@ -688,6 +695,16 @@ namespace eval asup {
         return $str
     }
 
+    proc get_flaired_key {key} {
+        variable config
+
+        set key_os [join [list $key $config(CURRENT_OS)] :]
+        set key_os_arch [join [list $key_os $config(CURRENT_ARCH)] :]
+
+        set result [list $key $key_os $key_os_arch]
+        return $result
+    }
+
     # launches the specified package if possible
     proc launch_package {index_json name} {
         variable config
@@ -702,9 +719,7 @@ namespace eval asup {
         set launch_argv {}
         set launch_jvm [find_jre8]
 
-        foreach potential_argv_list [list argv \
-                                          [join [list argv $config(CURRENT_OS)] :] \
-                                          [join [list argv $config(CURRENT_OS) $config(CURRENT_ARCH)] :]] {
+        foreach potential_argv_list [get_flaired_key argv] {
             if {[dict exists $launch_block $potential_argv_list]} {
                 # all the passed in CLI arguments must be interpolated
                 foreach arg [dict get $launch_block $potential_argv_list] {
@@ -720,16 +735,24 @@ namespace eval asup {
         }
 
         # if necessary, combine the JVM classpath string (-cp) appropriately
-        if {[dict exists $launch_block jvm_cp]} {
-            set launch_jvm_cp [interpolate_launch_string [dict get $launch_block jvm_cp]]
+        set launch_jvm_cp_combined {}
+        set launch_jvm_cp_sep [combine_jvm_classpath -]
 
-            if {! [file isfile $launch_jvm_cp]} {
-                return -code error "cannot combine JVM classpath - no such file - \"$launch_jvm_cp\""
+        foreach potential_jvm_cp_key [get_flaired_key jvm_cp] {
+            if {[dict exists $launch_block $potential_jvm_cp_key]} {
+                set launch_jvm_cp [interpolate_launch_string [dict get $launch_block $potential_jvm_cp_key]]
+
+                if {! [file isfile $launch_jvm_cp]} {
+                    return -code error "cannot combine JVM classpath - no such file - \"$launch_jvm_cp\""
+                }
+
+                set launch_jvm_cp [combine_jvm_classpath $launch_jvm_cp]
+                lappend launch_jvm_cp_combined $launch_jvm_cp
             }
-
-            set launch_jvm_cp [combine_jvm_classpath $launch_jvm_cp]
-            lappend launch_argv {-cp} $launch_jvm_cp
         }
+
+        set launch_jvm_cp_combined [join $launch_jvm_cp_combined $launch_jvm_cp_sep]
+        lappend launch_argv {-cp} $launch_jvm_cp_combined
 
         if {[dict exists $launch_block jvm_main]} {
             # call the main class directly (this is for cases when it is
