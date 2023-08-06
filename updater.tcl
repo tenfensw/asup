@@ -116,7 +116,7 @@ namespace eval asup {
                     }
 
                     default {
-                        show_error "unknown flag - '$flag'"
+                        return -code error "unknown flag - '$flag'"
                         exit 1
                     }
                 }
@@ -234,6 +234,21 @@ namespace eval asup {
 
         set config(CURRENT_USERNAME) $result
 
+        return $result
+    }
+
+    # returns formatted specs for the progress window as a dictionary
+    proc get_wm_dict {} {
+        variable config
+        set result [dict create]
+
+        foreach key [array names config] {
+            if {[regexp -- {^WM_*} $key]} {
+                dict set result $key $config($key)
+            }
+        }
+
+        dict set result CONFIG_PATH $config(CONFIG_PATH)
         return $result
     }
 
@@ -439,28 +454,10 @@ namespace eval asup {
         return $result
     }
 
-    proc show_error {args} {
-        variable config
-
-        if {$config(USE_TK)} {
-            ui::show_alert [join $args { }]
-            exit 1
-        } else {
-            return -code error [join $args { }]
-        }
-    }
-
     proc show_help {} {
         set str [join [list "Usage: $::argv0" \
                             {[-N] [-P<package name>] [-h]}] { }]
-
-        variable config
-
-        if {$config(USE_TK)} {
-            ui::show_alert $str
-        } else {
-            puts stderr $str
-        }
+        puts stderr $str
     }
 
     proc get_index_json {} {
@@ -833,10 +830,10 @@ if {$::argv0 == [info script]} {
 
     # make sure we have something to download, update or verify first
     if {[llength $::asup::config(CAN_DOWNLOAD_PACKAGE)] < 1} {
-        asup::show_error "expected package name to download/update, got nothing"
+        error "expected package name to download/update, got nothing"
     } elseif {$::asup::config(CAN_LAUNCH) &&
               [llength $::asup::config(CAN_DOWNLOAD_PACKAGE)] >= 2} {
-        asup::show_error "can only launch one package"
+        error "can only launch one package"
     }
 
     foreach name $::asup::config(CAN_DOWNLOAD_PACKAGE) {
