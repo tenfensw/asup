@@ -4,6 +4,8 @@ package require Thread 2.6
 namespace eval asup {
     namespace eval mt {
         variable wk_result 0
+        variable wk_error 0
+
         variable wk_thread {}
 
         proc init {} {
@@ -29,7 +31,7 @@ namespace eval asup {
                            }]
         }
 
-        proc enqueue {command} {
+        proc enqueue {command {wait_cmd -}} {
             set var_name [join [list [namespace current] wk_result] ::]
 
             # initialize the worker thread if it hasn't been already done yet
@@ -39,6 +41,26 @@ namespace eval asup {
             # result directly
             variable wk_thread
             thread::send -async $wk_thread $command $var_name
+
+            if {$wait_cmd != {-}} {
+                # keep the event loop running using the specified vwait-like
+                # command
+                $wait_cmd $var_name
+
+                # return the resulting execution value
+                variable wk_result
+                return $wk_result
+            }
+        }
+
+        proc set_var {name {value {}}} {
+            # initialize the worker thread in advance just in case
+            init
+
+            # set the variable value inside the worker thread interpreter as
+            # requested
+            variable wk_thread
+            thread::send $wk_thread [list set $name $value]
         }
 
         proc deinit {} {

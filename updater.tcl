@@ -34,9 +34,10 @@ namespace eval asup {
                            CAN_LAUNCH 0 \
                            CAN_VERIFY_JRE 1 \
                            \
-                           USE_TK 0 \
+                           USE_MT 0 \
                            \
                            WM_TITLE_TK "Ascention Updater" \
+                           WM_STYLISH_TK 0 \
                            \
                            WM_W_TK 486 \
                            WM_H_TK 453 \
@@ -103,6 +104,16 @@ namespace eval asup {
                     J { set config(CAN_VERIFY_JRE) 0 }
 
                     G { set config(USE_TK) 1 }
+                    D {
+                        # declare a preset override value for a configuration
+                        # key - the operand will be of key=value format
+                        set operand [split $operand {=}]
+
+                        set key [lindex $operand 0]
+                        set value [lrange $operand 1 end]
+
+                        set config($key) $value
+                    }
 
                     M { set config(INDEX_JSON) $operand }
                     v {
@@ -111,8 +122,10 @@ namespace eval asup {
 
                     [uUhH?] {
                         # displays the help message and exists
-                        show_help
-                        exit 1
+                        if {! $config(USE_MT)} {
+                            show_help
+                            exit 1
+                        }
                     }
 
                     default {
@@ -243,12 +256,16 @@ namespace eval asup {
         set result [dict create]
 
         foreach key [array names config] {
-            if {[regexp -- {^WM_*} $key]} {
+            if {[regexp -- {^WM_*} $key] ||
+                [lsearch -exact {CAN_DOWNLOAD_PACKAGE
+                                 CAN_LAUNCH
+                                 CAN_CHECK_FOR_UPDATES
+                                 CURRENT_VERSION
+                                 CONFIG_PATH} $key] >= 0} {
                 dict set result $key $config($key)
             }
         }
 
-        dict set result CONFIG_PATH $config(CONFIG_PATH)
         return $result
     }
 
