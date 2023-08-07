@@ -22,14 +22,16 @@ namespace eval asup {
                            SHASUM_PATH "/usr/bin/shasum" \
                            \
                            CURRENT_ROOT "/tmp/aa" \
-                           CURRENT_VERSION {2023.08.02.3} \
+                           CURRENT_VERSION {2023.08.02.4} \
                            \
                            INDEX_JSON "https://valche.fun/asup/index.json" \
                            VAR_SPECIALS {_} \
                            \
                            CAN_CHECK_FOR_UPDATES 1 \
-                           CAN_FORCE_REDOWNLOAD 0 \
+                           CAN_FORCE_UPDATE 0 \
+                           \
                            CAN_DOWNLOAD_PACKAGE {} \
+                           CAN_FORCE_REDOWNLOAD 0 \
                            \
                            CAN_LAUNCH 0 \
                            CAN_VERIFY_JRE 1 \
@@ -76,6 +78,8 @@ namespace eval asup {
                         skip-updates-check { set flag {N} }
                         skip-verify-jre { set flag {J} }
 
+                        force-update { set flag {u} }
+
                         package* -
                         pkg* -
                         game { set flag {P} }
@@ -98,6 +102,8 @@ namespace eval asup {
                 # handle flag accordingly
                 switch -glob -- $flag {
                     N { set config(CAN_CHECK_FOR_UPDATES) 0 }
+                    u { set config(CAN_FORCE_UPDATE) 1 }
+
                     P { lappend config(CAN_DOWNLOAD_PACKAGE) $operand }
 
                     L { set config(CAN_LAUNCH) 1 }
@@ -500,6 +506,11 @@ namespace eval asup {
 
     proc is_latest {index_json} {
         variable config
+
+        if {$config(CAN_FORCE_UPDATE)} {
+            return 0
+        }
+
         set latest_version $config(CURRENT_VERSION)
 
         if {[dict exists $index_json general version]} {
