@@ -13,7 +13,7 @@ namespace eval asup {
                            CURRENT_ARCH $::tcl_platform(machine) \
                            \
                            CURRENT_USERNAME Player \
-                           CURRENT_RAM_LIMIT 6G \
+                           CURRENT_RAM_LIMIT 6 \
                            \
                            CURL_PATH "/usr/bin/curl" \
                            CURL_FLAGS {-kLf} \
@@ -35,6 +35,9 @@ namespace eval asup {
                            \
                            CAN_LAUNCH 0 \
                            CAN_VERIFY_JRE 1 \
+                           \
+                           USE_MULTIROOT 1 \
+                           CURRENT_MULTIROOT default \
                            \
                            USE_MT 0 \
                            \
@@ -80,6 +83,9 @@ namespace eval asup {
 
                         force-update { set flag {u} }
 
+                        uri -
+                        mirror { set flag {M} }
+
                         package* -
                         pkg* -
                         game { set flag {P} }
@@ -87,8 +93,7 @@ namespace eval asup {
                         run -
                         launch { set flag {L} }
 
-                        ui -
-                        gui { set flag {G} }
+                        multiroot { set flag {C} }
 
                         usage -
                         help { set flag {?} }
@@ -109,7 +114,6 @@ namespace eval asup {
                     L { set config(CAN_LAUNCH) 1 }
                     J { set config(CAN_VERIFY_JRE) 0 }
 
-                    G { set config(USE_TK) 1 }
                     D {
                         # declare a preset override value for a configuration
                         # key - the operand will be of key=value format
@@ -122,6 +126,8 @@ namespace eval asup {
                     }
 
                     M { set config(INDEX_JSON) $operand }
+                    C { set config(CURRENT_MULTIROOT) $operand }
+
                     v {
                         lappend config(CURL_FLAGS) {-v}
                     }
@@ -202,6 +208,140 @@ namespace eval asup {
         }
     }
 
+    proc read_ini {path {encoding utf-8} {globals_name global}} {
+        # the resulting dictionary containing the entirety of the INI contents
+        set result {}
+        # current section name
+        set section_name {}
+
+        # make sure the file we are about to read exists in the first place
+        if {! [file isfile $path]} {
+            return -code error "no such file - \"$path\""
+        }
+
+        # line counter
+        set count 0
+
+        # open file descriptor with the specified parameters accordingly
+        set lines [read_ascii $path $encoding auto 1]
+
+        for {set count 0} {$count < [llength $lines]} {incr count} {
+            # obtain the line string trimmed out of stray whitespaces or 
+            # new lines
+            set line [string trim [lindex $lines $count]]
+
+            if {[string length $line] < 1 ||
+                [regexp {^(\;|\#)} $line]} {
+                # skip all the comment lines
+                continue
+            } elseif {[string index $line 0] == {[}} {
+                set section_name [string range $line 1 end-1]
+                set section_name [string trim $section_name]
+
+                if {[string length $section_name] < 1} {
+                    return -code error "empty section name encountered (line $count)"
+                }
+            } else {
+                # split key-value pair line
+                set line [split $line {=}]
+
+                # make sure it is one of these lines in the first place
+                if {[llength $line] < 2} {
+                    return -code error "expected key-value pair (line $count)"
+                }
+
+                set key [lindex $line 0]
+
+                set value [lrange $line 1 end]
+                set value [join $value {=}]
+
+                if {$section_name == {}} {
+                    set section_name $globals_name
+                }
+
+                # make up mind where are we going to save the key-value pair
+                dict set result $section_name $key $value
+            }
+        }
+
+        # the globals section must be always available, even if the input INI
+        # file turned out to be empty or completely consisting out of comments
+        if {! [dict exists $result $globals_name]} {
+            dict set result $globals_name {}
+        }
+
+        return $result
+    }
+
+    proc config_from_ini {path {encoding utf-8} {ignore_invalid_multiroot 1}} {
+        if {! [file isfile $path]} {
+            # no need to try to parse a non-existing config file
+            return 0
+        }
+
+        # read in the entirety of the INI's contents into a dictionary
+        set ini [read_ini $path $encoding default]
+
+        # obtain the root configuration section if possible
+        variable config
+        set multiroot_block {}
+
+        if {[dict exists $ini $config(CURRENT_MULTIROOT)]} {
+            set multiroot_block [dict get $ini $config(CURRENT_MULTIROOT)]
+        } elseif {$config(USE_MULTIROOT)} {
+            # make sure the multiroot is at least referred to in the global config
+            # INI in some shape or form
+            if {! [dict exists $ini multiroot $config(CURRENT_MULTIROOT)]} {
+                if {$ignore_invalid_multiroot} {
+                    # if requested, just display a warning and stop here
+                    puts stderr "Warning! requested multiroot unavailable - $config(CURRENT_MULTIROOT)"
+                    return
+                }
+
+                return -code error "multiroot unavailable - $config(CURRENT_MULTIROOT)"
+            }
+
+            set multiroot_config_path [dict get $ini multiroot \
+                                                     $config(CURRENT_MULTIROOT)]
+
+
+            # read in separate multiroot config INI, if possible
+            set multiroot_block [read_ini $multiroot_config_path $encoding \
+                                                                 default]
+            set multiroot_block [dict get $multiroot_block default]
+        }
+
+        dict for {key value} $ini {
+            # all keys are treated in their uppercase form
+            set key [string toupper $key]
+            set potential_key [join [list CURRENT $key] {_}]
+
+            # short aliases of CURRENT_* config keys are also permitted
+            if {[info exists config($potential_key)]} {
+                set key $potential_key
+            }
+
+            if {[info exists config($key)]} {
+                # set the config key value as is
+                set config($key) $value
+            }
+        }
+
+        return 1
+    }
+
+    proc reload_config_from_ini {{name default}} {
+        variable config
+
+        # if requested (and permitted), switch to the specified multiroot
+        if {$config(USE_MULTIROOT)} {
+            set config(CURRENT_MULTIROOT) $name
+        }
+
+        # load the config INI
+        return [config_from_ini $config(CONFIG_PATH)]
+    }
+
     # obtains CPU arch from machine name
     proc get_arch {machine} {
         switch -glob -nocase -- $machine {
@@ -267,6 +407,9 @@ namespace eval asup {
                                  CAN_LAUNCH
                                  CAN_CHECK_FOR_UPDATES
                                  CURRENT_VERSION
+                                 CURRENT_USERNAME
+                                 CURRENT_RAM_LIMIT
+                                 CURRENT_ROOT
                                  CONFIG_PATH} $key] >= 0} {
                 dict set result $key $config($key)
             }
@@ -422,7 +565,7 @@ namespace eval asup {
         set path_root [file dirname $path]
 
         set result {}
-        set classpath_contents [split [read_ascii $path] "\n"]
+        set classpath_contents [read_ascii $path utf-8 auto 1 0]
 
         foreach path_jar $classpath_contents {
             if {! [file isfile $path_jar]} {
@@ -437,7 +580,8 @@ namespace eval asup {
         return $result
     }
 
-    proc read_ascii {path {encoding utf-8} {translation auto}} {
+    proc read_ascii {path {encoding utf-8} {translation auto}
+                     {use_nl 0} {retain_empty_nls 1}} {
         if {! [file isfile $path]} {
             return -code error "no such file - \"$path\""
         }
@@ -446,8 +590,30 @@ namespace eval asup {
         set fd [open $path r]
         fconfigure $fd -encoding $encoding -translation $translation
 
-        # read in the entirety of the file
-        set result [read $fd]
+        set result {}
+
+        if {$use_nl} {
+            # make sure we are not trying to do the splitting in binary mode
+            if {$encoding == {binary}} {
+                close $fd
+                return -code error "you cannot read line by line in binary mode - \"$path\""
+            }
+
+            while {! [eof $fd]} {
+                set line [gets $fd]
+
+                # read the file line by line and, unless restricted by enforced
+                # length limits, add it to the resulting list as is
+                if {$retain_empty_nls ||
+                    [string length $line] > 0} {
+                    lappend result $line
+                }
+            }
+        } else {
+            # read in the entirety of the file as is
+            set result [read $fd]
+        }
+
         close $fd
 
         # unless we were reading in binary mode, trim all whitespaces and stray
@@ -830,6 +996,9 @@ asup::adapt_config_for_win32
 
 # guess in-game username from the OS
 asup::guess_username
+
+# read in the config INI file, if possible
+asup::reload_config_from_ini
 
 if {$::argv0 == [info script]} {
     # read in CLI options to configure our behaviour accordingly

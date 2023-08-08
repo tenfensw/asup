@@ -25,7 +25,7 @@ namespace eval asup {
             set wm_x [expr {($sc_width / 2) - ($wm_width / 2)}]
             set wm_y [expr {($sc_height / 2) - ($wm_height / 2)}]
 
-            wm geometry . [join [list {=} $wm_width x $wm_height + $wm_x + $wm_y] {}]
+            wm geometry $wm_wnd [join [list {=} $wm_width x $wm_height + $wm_x + $wm_y] {}]
         }
 
         proc init_stylish {wm_info} {
@@ -100,6 +100,16 @@ namespace eval asup {
                 pack .pbCap .pbBar -fill x -padx 5 -pady 5
             }
 
+            # make sure the window can't be quit that easily
+            wm protocol . WM_DELETE_WINDOW {
+                if {[tk_messageBox -default no -icon question \
+                                   -message {Are you sure?} \
+                                   -parent . \
+                                   -type yesno]} {
+                    asup::ui::deinit
+                }
+            }
+
             # obtain index.json contents first
             set_status 5 {Establishing connection...}
             asup::mt::enqueue { set index_json [asup::get_index_json] } tkvwait
@@ -110,19 +120,283 @@ namespace eval asup {
             }
         }
 
-        proc download_package {name} {
-            set_status 10 "Preparing \"$name\"..."
+        proc deinit {{error_code 0}} {
+            # terminate the background worker thread first
+            asup::mt::deinit
 
+            # destroy the progress window and exit with the specified error
+            # code
+            destroy .
+            exit $error_code
+        }
+
+        # configuration window modal form
+        namespace eval cwnd {
+            variable wm_cresult 0
+
+            variable wm_cname .cn
+            variable wm_title {Configuration}
+
+            variable wm_fields {}
+            variable wm_contrs {}
+
+            proc make_form {type caption value field} {
+                variable wm_cname
+                variable wm_contrs
+
+                # Tk forces all control names to be lowercase, that's why we
+                # have to do this
+                set field [string tolower $field]
+                set result {}
+
+                # make sure the specified field is not known to us as of yet
+                if {[dict exists $wm_contrs $field]} {
+                    return -code error "form definition duplicate - \"$field\""
+                }
+
+                # make a label control first
+                set caption_contr_name [join [list $field cap] {}]
+                set caption_contr [ttk::label $wm_cname.$caption_contr_name \
+                                              -text $caption]
+
+                lappend result $caption_contr
+
+                switch -glob -nocase -- $type {
+                    dir* -
+                    entry {
+                        # make an entry box control then
+                        set field_contr [ttk::entry $wm_cname.$field]
+                        lappend result $field_contr
+
+                        # set its current value to the default one provided
+                        $field_contr insert 0 $value
+
+                        if {[regexp -nocase {^dir*} $type]} {
+                            set picker_contr_command [join [list [namespace current] \
+                                                                  pick_dirp] {::}]
+                            set picker_contr_command [list $picker_contr_command \
+                                                           $field]
+
+                            # make a directory picker button control
+                            set picker_contr_name [join [list $field pick] {}]
+                            set picker_contr [ttk::button $wm_cname.$picker_contr_name \
+                                                          -text {...} \
+                                                          -command $picker_contr_command]
+
+                            lappend result $picker_contr
+
+                            # make sure the entry box is disabled so that the
+                            # user could only pick a valid directory path
+                            $field_contr configure -state readonly
+                        }
+                    }
+
+                    scale -
+                    spin* {
+                        if {! [string is digit $value]} {
+                            return -code error "non-numeric value for a spinbox - $value"
+                        }
+
+                        # make a numeric scale control
+                        set field_contr [ttk::scale $wm_cname.$field \
+                                                    -value $value \
+                                                    -from 1 -to 16]
+                        lappend result $field_contr
+                    }
+
+                    default { return -code error "unknown form type - $type" }
+                }
+
+                dict set wm_contrs $field $result
+            }
+
+            proc pick_dirp {field} {
+                variable wm_cname
+
+                set root [tk_chooseDirectory -parent $wm_cname]
+                puts stderr "root = \"$root\""
+
+                if {[string length $root] > 0} {
+                    set field_contr [join [list $wm_cname $field] .]
+
+                    # set the entry control's value to the selected directory
+                    $field_contr configure -state normal
+
+                    $field_contr delete 0 end
+                    $field_contr insert 0 $root
+
+                    $field_contr configure -state readonly
+                }
+            }
+
+            proc init {contr_map {title {}}} {
+                variable wm_cname
+                toplevel $wm_cname
+
+                variable wm_title
+
+                if {$title != {}} {
+                    set wm_title $title
+                }
+
+                wm title $wm_cname $title
+                wm resizable $wm_cname 0 0
+
+                dict for {field field_type} $contr_map {
+                    if {[llength $field_type] < 2} {
+                        return -code error "incorrect form list for $field - need at least one of the types specified and a caption string as well"
+                    }
+
+                    set value [join [lrange $field_type 2 end] {}]
+                    set caption [lindex $field_type 1]
+
+                    set field_type [lindex $field_type 0]
+
+                    puts stderr "type = $field_type, caption = $caption, value = $value"
+
+                    # add the field to the form
+                    make_form $field_type $caption $value $field
+                }
+
+                variable wm_contrs
+                set row 0
+
+                dict for {field grp} $wm_contrs {
+                    puts stderr "griding field $field... (row $row)"
+
+                    for {set column 0} {$column < [llength $grp]} {incr column} {
+                        set contr [lindex $grp $column]
+                        grid $contr -row $row -column $column -padx 5 -ipady 5
+                    }
+
+                    incr row
+                }
+
+                grid [ttk::button $wm_cname.okB -text {OK} -command {
+                        asup::ui::cwnd::deinit ok
+                      }] -row $row -column 1
+                grid [ttk::button $wm_cname.caB -text {Cancel} -command {
+                        asup::ui::cwnd::deinit cancel
+                      }] -row $row -column 2
+
+                wm protocol $wm_cname WM_DELETE_WINDOW {
+                    asup::ui::cwnd::deinit cancel
+                }
+            }
+
+            proc deinit {cresult} {
+                variable wm_cresult
+                set wm_cresult $cresult
+
+                variable wm_cname
+                variable wm_contrs
+
+                set result {}
+
+                foreach field [dict keys $wm_contrs] {
+                    puts stderr "field = \"$field\""
+
+                    set contr [join [list $wm_cname $field] .]
+                    dict set result [string toupper $field] [$contr get]
+                }
+
+                if {$cresult == {ok}} {
+                    variable wm_fields
+                    set wm_fields $result
+                }
+
+                destroy $wm_cname
+            }
+
+            proc run {} {
+                set var_name [join [list [namespace current] wm_cresult] {::}]
+                tkwait variable $var_name
+
+                variable wm_cresult
+                variable wm_fields
+
+                switch -glob -nocase -- $wm_cresult {
+                    ok { return $wm_fields }
+                    cancel { return {} }
+
+                    0 -
+                    default { return -code error "unknown dialog result - $wm_cresult" }
+                }
+            }
+        }
+
+        proc configure_package {name} {
+            # pull the latest multiroot-related config keys (they are all a
+            # part of the WM specs dictionary)  
+            get_wm_info
+
+            variable wm_info
+            set form [dict create CURRENT_USERNAME \
+                                  [list entry {In-game player name:} \
+                                        [dict get $wm_info CURRENT_USERNAME]] \
+                                  \
+                                  CURRENT_ROOT \
+                                  [list dirp {Installation directory:} \
+                                        [dict get $wm_info CURRENT_ROOT]] \
+                                  CURRENT_RAM_LIMIT \
+                                  [list spin {RAM limit (in GB):} \
+                                        [dict get $wm_info CURRENT_RAM_LIMIT]] ]
+
+            # display the configuration form
+            cwnd::init $form "Configure $name"
+            set result [cwnd::run]
+
+            if {$result == {}} {
+                # package configuration cancelled
+                return 0
+            }
+
+            dict for {key value} $result {
+                # modify config values directly in the worker thread
+                asup::mt::set_var asup::config($key) $value
+            }
+
+            # make sure the username gets stripped from all the ASCII-incompatible
+            # characters
+            asup::mt::enqueue { asup::guess_username } tkvwait
+
+            # we're good!
+            return 1
+        }
+
+        proc dump_config_to_ini {} {
+            variable wm_info
+            set config_path [dict get $wm_info CONFIG_PATH]
+
+            puts stderr "config_path = \"$config_path\""
+        }
+
+        proc download_package {name} {
+            set_status 60 "Downloading \"$name\"... (~15 minutes)"
+
+            # begin downloading the package in the background
             asup::mt::set_var name $name
             asup::mt::enqueue { asup::download_package $index_json $name } tkvwait
         }
 
-        proc configure_package {name} {
-            set_status 60 "Configuring \"$name\"..."
+        proc launch_package {name} {
+            set_status 80 "Launching \"$name\"..."
         }
 
-        proc launch_package {name} {
-            set_status 90 "Launching \"$name\"..."
+        proc read_ascii args {
+            # to call this procedure, we could have just imported the updater
+            # library into the UI thread as well, but since the updater is
+            # currently not a Tcl package, sourcing it again here directly
+            # would be a huge overhead for just this one specific procedure
+            # (and don't forget that the library would get re-initialized
+            # again, but here, which is something we don't want!), so yeah...
+            # hence why we're doing this in such a weird workaround way
+
+            # call read_ascii directly with all the arguments preserved as is
+            set args [linsert $args 0 asup::read_ascii]
+            asup::mt::enqueue $args vwait
+
+            return $asup::mt::wk_result
         }
 
         proc main {} {
@@ -131,9 +405,32 @@ namespace eval asup {
                 return
             }
 
+            set current_requested_packages {}
+            set current_multiroot default
+
+            set current_opts_path [join [list [file dirname $::argv0] \
+                                              multiroot.txt] /]
+
+
+            if {[file isfile $current_opts_path]} {
+                set current_opts [read_ascii $current_opts_path utf-8 auto 1 0]
+
+                set current_multiroot [lindex $current_opts 0]
+                set current_requested_packages [lrange $current_opts 1 end]
+            }
+
+            # switch to the specified multiroot
+            puts stderr "current multiroot: $current_multiroot"
+            asup::mt::enqueue [list asup::reload_config_from_ini \
+                                    $current_multiroot] tkvwait
+
             # obtain list of packages to download and launch
+            set requested_packages $current_requested_packages
+
             variable wm_info
-            set requested_packages [dict get $wm_info CAN_DOWNLOAD_PACKAGE]
+            if {[llength $requested_packages] < 1} {
+                set requested_packages [dict get $wm_info CAN_DOWNLOAD_PACKAGE]
+            }
 
             # make sure we have some in the first place
             if {[llength $requested_packages] < 1} {
@@ -145,10 +442,16 @@ namespace eval asup {
 
             # if we do, download these packages and, maybe, even launch them
             foreach name $requested_packages {
-                download_package $name
-                configure_package $name
+                if {! [configure_package $name]} {
+                    # configuration cancelled -> cannot continue
+                    exit 0
+                }
 
-                launch_package $name
+                download_package $name
+
+                if {[dict get $wm_info CAN_LAUNCH]} {
+                    launch_package $name
+                }
             }
         }
     }
