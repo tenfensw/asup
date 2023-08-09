@@ -12,7 +12,7 @@ namespace eval asup {
 
         proc get_wm_info {} {
             variable wm_info
-            set wm_info [asup::mt::enqueue { asup::get_wm_dict } vwait]
+            set wm_info [asup::mt::try_enqueue { asup::get_wm_dict } vwait]
         }
 
         proc center_wm {{wm_wnd .} {wm_info {}}} {
@@ -34,10 +34,10 @@ namespace eval asup {
         proc check_for_updates {} {
             set_status 10 {Checking for updates...}
 
-            if {! [asup::mt::enqueue { asup::is_latest $index_json } tkvwait]} {
+            if {! [asup::mt::try_enqueue { asup::is_latest $index_json } tkvwait]} {
                 # obtain new version flair first
-                set new_version [asup::mt::enqueue { dict get $index_json general version } \
-                                                   vwait]
+                set new_version [asup::mt::try_enqueue { dict get $index_json general version } \
+                                                       vwait]
                 # obtain the current version flair as well
                 variable wm_info
                 set current_version [dict get $wm_info CURRENT_VERSION]
@@ -76,7 +76,7 @@ namespace eval asup {
         proc init {} {
             if {$::argv0 == [info script]} {
                 # make sure we don't ignore the CLI args if we are running in standalone mode
-                asup::mt::enqueue [list asup::config_from_argv $::argv] vwait
+                asup::mt::try_enqueue [list asup::config_from_argv $::argv] vwait
             }
 
             # obtain UI-related info dictionary
@@ -112,7 +112,7 @@ namespace eval asup {
 
             # obtain index.json contents first
             set_status 5 {Establishing connection...}
-            asup::mt::enqueue { set index_json [asup::get_index_json] } tkvwait
+            asup::mt::try_enqueue { set index_json [asup::get_index_json] } tkvwait
 
             if {[dict get $wm_info CAN_CHECK_FOR_UPDATES]} {
                 # mission #1 - make sure we are running the latest version
@@ -193,6 +193,11 @@ namespace eval asup {
 
                     scale -
                     spin* {
+                        if {[string index $value end] == {G}} {
+                            # TODO: remove this dirty hack
+                            set value [string range $value 0 end-1]
+                        }
+
                         if {! [string is digit $value]} {
                             return -code error "non-numeric value for a spinbox - $value"
                         }
@@ -352,23 +357,71 @@ namespace eval asup {
             }
 
             dict for {key value} $result {
+                if {[string equal $key CURRENT_RAM_LIMIT]} {
+                    # add the gigabyte postfix (TODO: get rid of this dirty
+                    # hack later)
+                    set value [join [list $value G] {}]
+                }
+
                 # modify config values directly in the worker thread
                 asup::mt::set_var asup::config($key) $value
             }
 
             # make sure the username gets stripped from all the ASCII-incompatible
             # characters
-            asup::mt::enqueue { asup::guess_username } tkvwait
+            asup::mt::try_enqueue { asup::guess_username } tkvwait
+
+            # try to save the config INI then
+            save_ini $result
 
             # we're good!
             return 1
         }
 
-        proc dump_config_to_ini {} {
-            variable wm_info
-            set config_path [dict get $wm_info CONFIG_PATH]
+        proc save_ini {multiroot_ini} {
+            # TODO: intergate this over into the updater library
+            set wm_config [asup::mt::try_enqueue { dict create \
+                                                    CONFIG_PATH \
+                                                    $asup::config(CONFIG_PATH) \
+                                                    CURRENT_MULTIROOT \
+                                                    $asup::config(CURRENT_MULTIROOT) \
+                                                    CURRENT_MULTIROOT_CONFIG \
+                                                    $asup::config(CURRENT_MULTIROOT_CONFIG) } \
+                                                  tkvwait]
+            set multiroot_config_path [dict get $wm_config CURRENT_MULTIROOT_CONFIG]
+            set multiroot_name [dict get $wm_config CURRENT_MULTIROOT]
 
-            puts stderr "config_path = \"$config_path\""
+            # TODO: support non-multiroots
+            if {$multiroot_name == {default}} {
+                return -code error "non-multiroots currently unsupported!"
+            }
+
+            if {$multiroot_config_path == {}} {
+                set multiroot_config_path [join [list [dict get $multiroot_ini CURRENT_ROOT] \
+                                                      Ascention.ini] /]
+            }
+
+            catch { file mkdir [file dirname $multiroot_config_path] }
+
+            set fd [open $multiroot_config_path w]
+            fconfigure $fd -encoding utf-8 -translation lf
+
+            dict for {key value} $multiroot_ini {
+                puts $fd [join [list $key $value] {=}]
+            }
+
+            flush $fd
+            close $fd
+
+            # TODO: respect global config INI if it exists
+            set fd [open [dict get $wm_config CONFIG_PATH] w]
+            fconfigure $fd -encoding utf-8 -translation lf
+
+            puts $fd {[multiroot]}
+            puts $fd [join [list $multiroot_name $multiroot_config_path] {=}]
+
+            flush $fd
+            close $fd
         }
 
         proc download_package {name} {
@@ -376,11 +429,15 @@ namespace eval asup {
 
             # begin downloading the package in the background
             asup::mt::set_var name $name
-            asup::mt::enqueue { asup::download_package $index_json $name } tkvwait
+            asup::mt::try_enqueue { asup::download_package $index_json $name } tkvwait
         }
 
         proc launch_package {name} {
             set_status 80 "Launching \"$name\"..."
+
+            # try to launch the package
+            asup::mt::set_var launch_name $name
+            asup::mt::try_enqueue { asup::launch_package $index_json $launch_name } tkvwait
         }
 
         proc read_ascii args {
@@ -394,9 +451,7 @@ namespace eval asup {
 
             # call read_ascii directly with all the arguments preserved as is
             set args [linsert $args 0 asup::read_ascii]
-            asup::mt::enqueue $args vwait
-
-            return $asup::mt::wk_result
+            return [asup::mt::try_enqueue $args vwait]
         }
 
         proc main {} {
@@ -417,12 +472,17 @@ namespace eval asup {
 
                 set current_multiroot [lindex $current_opts 0]
                 set current_requested_packages [lrange $current_opts 1 end]
+
+                # make sure the specified packages are launched automatically
+                # in this case
+                asup::mt::try_enqueue { set asup::config(CAN_LAUNCH) 1 } tkvwait
             }
 
             # switch to the specified multiroot
             puts stderr "current multiroot: $current_multiroot"
-            asup::mt::enqueue [list asup::reload_config_from_ini \
-                                    $current_multiroot] tkvwait
+            asup::mt::try_enqueue [list asup::reload_config_from_ini \
+                                                  $current_multiroot] \
+                                  tkvwait
 
             # obtain list of packages to download and launch
             set requested_packages $current_requested_packages
@@ -458,4 +518,10 @@ namespace eval asup {
 }
 
 asup::ui::init
-asup::ui::main
+
+if {[catch {asup::ui::main} message]} {
+    tk_messageBox -default ok -detail $message -icon error \
+                              -message {An error has occured.} \
+                              -parent . -type ok
+    exit 1
+}

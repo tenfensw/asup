@@ -53,6 +53,35 @@ namespace eval asup {
             }
         }
 
+        proc try_enqueue {command wait_cmd} {
+            if {$wait_cmd == {} || $wait_cmd == {-}} {
+                return -code error "must have a valid event loop command!"
+            }
+
+            asup::mt::set_var command $command
+            asup::mt::enqueue {
+                tsv::set wk result {}
+                tsv::set wk error {}
+
+                if {[catch $command result]} {
+                    tsv::set wk error $result
+                } else {
+                    tsv::set wk result $result
+                }
+            } $wait_cmd
+
+            set is_error [tsv::get wk error]
+
+            if {[string length $is_error] > 0} {
+                return -code error $is_error
+            }
+
+            variable wk_result
+            set wk_result [tsv::get wk result]
+
+            return $wk_result
+        }
+
         proc set_var {name {value {}}} {
             # initialize the worker thread in advance just in case
             init

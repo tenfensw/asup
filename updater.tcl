@@ -13,7 +13,7 @@ namespace eval asup {
                            CURRENT_ARCH $::tcl_platform(machine) \
                            \
                            CURRENT_USERNAME Player \
-                           CURRENT_RAM_LIMIT 6 \
+                           CURRENT_RAM_LIMIT 6G \
                            \
                            CURL_PATH "/usr/bin/curl" \
                            CURL_FLAGS {-kLf} \
@@ -38,6 +38,7 @@ namespace eval asup {
                            \
                            USE_MULTIROOT 1 \
                            CURRENT_MULTIROOT default \
+                           CURRENT_MULTIROOT_CONFIG {} \
                            \
                            USE_MT 0 \
                            \
@@ -208,7 +209,7 @@ namespace eval asup {
         }
     }
 
-    proc read_ini {path {encoding utf-8} {globals_name global}} {
+    proc read_ini {path {encoding utf-8} {globals_name default}} {
         # the resulting dictionary containing the entirety of the INI contents
         set result {}
         # current section name
@@ -273,6 +274,32 @@ namespace eval asup {
         return $result
     }
 
+    proc dump_ini {input {globals_name global}} {
+        set result {}
+
+        dict for {section raw} $input {
+            set is_globals [string equal -nocase $globals_name $section]
+            set lines {}
+
+            dict for {key value} $raw {
+                lappend lines [join [list $key $value] {=}]
+            }
+
+            set lines [join $lines "\n"]
+
+            if {$is_globals} {
+                set result [linsert $result 0 $lines]
+            } else {
+                lappend result [join [list {[} $section {]}] {}]
+                lappend result $lines
+            }
+
+            lappend result {}
+        }
+
+        return [join $result "\n"]
+    }
+
     proc config_from_ini {path {encoding utf-8} {ignore_invalid_multiroot 1}} {
         if {! [file isfile $path]} {
             # no need to try to parse a non-existing config file
@@ -280,7 +307,7 @@ namespace eval asup {
         }
 
         # read in the entirety of the INI's contents into a dictionary
-        set ini [read_ini $path $encoding default]
+        set ini [read_ini $path $encoding]
 
         # obtain the root configuration section if possible
         variable config
@@ -304,14 +331,15 @@ namespace eval asup {
             set multiroot_config_path [dict get $ini multiroot \
                                                      $config(CURRENT_MULTIROOT)]
 
+            # cache multiroot config INI path
+            set config(CURRENT_MULTIROOT_CONFIG) $multiroot_config_path
 
             # read in separate multiroot config INI, if possible
-            set multiroot_block [read_ini $multiroot_config_path $encoding \
-                                                                 default]
+            set multiroot_block [read_ini $multiroot_config_path $encoding]
             set multiroot_block [dict get $multiroot_block default]
         }
 
-        dict for {key value} $ini {
+        dict for {key value} $multiroot_block {
             # all keys are treated in their uppercase form
             set key [string toupper $key]
             set potential_key [join [list CURRENT $key] {_}]
