@@ -129,6 +129,8 @@ namespace eval asup {
                     M { set config(INDEX_JSON) $operand }
                     C { set config(CURRENT_MULTIROOT) $operand }
 
+                    R { set config(CURRENT_ROOT) $operand }
+
                     v {
                         lappend config(CURL_FLAGS) {-v}
                     }
@@ -207,6 +209,24 @@ namespace eval asup {
                                    \
                                    CURRENT_OS darwin]
         }
+    }
+
+    proc log {args} {
+        set where_to stderr
+
+        # make sure the default channel to dump to is not overriden
+        variable config
+        if {[info exists config(WHERE_TO_LOG)]} {
+            set where_to $config(WHERE_TO_LOG)
+        }
+
+        # don't log anything if so is requested
+        if {$where_to == {} || $where_to == {-}} {
+            return
+        }
+
+        # dump to the specified channel
+        puts $where_to {*}$args
     }
 
     proc read_ini {path {encoding utf-8} {globals_name default}} {
@@ -321,7 +341,7 @@ namespace eval asup {
             if {! [dict exists $ini multiroot $config(CURRENT_MULTIROOT)]} {
                 if {$ignore_invalid_multiroot} {
                     # if requested, just display a warning and stop here
-                    puts stderr "Warning! requested multiroot unavailable - $config(CURRENT_MULTIROOT)"
+                    log "Warning! requested multiroot unavailable - $config(CURRENT_MULTIROOT)"
                     return
                 }
 
@@ -493,14 +513,14 @@ namespace eval asup {
             set path [file nativename $path]
             set target_root [file nativename $target_root]
 
-            puts stderr "Extracting in progress, this might take a while... (path = \"$path\")"
+            log "Extracting in progress, this might take a while... (path = \"$path\")"
 
             variable config
             if {[catch {exec -ignorestderr -- $config(TAR_PATH) \
                                                         -C $target_root \
                                                         [join [list {-} x $expansion_flag f] {}] \
                                                         $path} reason]} {
-                puts stderr "Warning! extracting \"$path\" failed - $reason"
+                log "Warning! extracting \"$path\" failed - $reason"
                 return 0
             }
         }
@@ -519,7 +539,7 @@ namespace eval asup {
             return 1
         }
 
-        puts stderr "Verifying \"$path\"..."
+        log "Verifying \"$path\"..."
 
         # convert file path to OS-native one since we might be using external
         # binaries for checksum calculation if they are available
@@ -541,7 +561,7 @@ namespace eval asup {
         # hexademical SHA-1 checksum strings are case-insensitive
         set result [string equal -nocase $tgt $sha1]
 
-        puts stderr "sha1: $sha1, tgt: $tgt, path: \"$path\", matches: $result"
+        log "sha1: $sha1, tgt: $tgt, path: \"$path\", matches: $result"
         return $result
     }
 
@@ -674,7 +694,7 @@ namespace eval asup {
     proc show_help {} {
         set str [join [list "Usage: $::argv0" \
                             {[-N] [-P<package name>] [-h]}] { }]
-        puts stderr $str
+        log $str
     }
 
     proc get_index_json {} {
@@ -753,7 +773,7 @@ namespace eval asup {
                                      [dict get $package_block obsoleted_by]]
         }
 
-        puts stderr "downloads block: $package_downloads_block"
+        log "downloads block: $package_downloads_block"
 
         foreach package_download_block $package_downloads_block {
             set uri [dict get $package_download_block uri]
@@ -771,15 +791,15 @@ namespace eval asup {
                                          $arch]
             }
 
-            puts stderr "got uri: $uri"
-            puts stderr "SHA1 checksum: $sha1"
-            puts stderr "OS: $os"
-            puts stderr "arch: $arch"
+            log "got uri: $uri"
+            log "SHA1 checksum: $sha1"
+            log "OS: $os"
+            log "arch: $arch"
 
             # if the package is for our OS and platform, we can download it
             if {[string equal -nocase $os $config(CURRENT_OS)] &&
                 [string equal -nocase $arch [get_arch $config(CURRENT_ARCH)]]} {
-                puts stderr "eligible for download"
+                log "eligible for download"
 
                 set path [join [list $config(CURRENT_ROOT) [file tail $uri]] /]
                 set path_sha1 [join [list $path sha1] .]
@@ -799,14 +819,14 @@ namespace eval asup {
                     set do_force_redownload 1
                 }
 
-                puts stderr "do_force_redownload = $do_force_redownload"
+                log "do_force_redownload = $do_force_redownload"
 
                 if {$do_force_redownload} {
                     # download it first
-                    puts stderr "Downloading $uri (sha1: $sha1) into $path..."
+                    log "Downloading $uri (sha1: $sha1) into $path..."
                     curl $uri $path
 
-                    puts stderr "Download completed!"
+                    log "Download completed!"
 
                     # verify its checksum (to make sure the downloaded file is
                     # not corrupted)
@@ -814,7 +834,7 @@ namespace eval asup {
                         return -code error "SHA1 checksum mismatch, file corrupted - \"$path\""
                     }
 
-                    puts stderr "Verification completed!"
+                    log "Verification completed!"
 
                     # cache the checksum (since this is the way we'll be checking
                     # whether the installed package is up to date or not)
@@ -827,8 +847,8 @@ namespace eval asup {
                         flush $path_sha1_fd
                         close $path_sha1_fd
                     } reason]} {
-                        puts stderr "Warning! Failed to save checksum file - \"$path_sha1\" - $reason"
-                        puts stderr "(this means that next time the package will be probably force re-downloaded)"
+                        log "Warning! Failed to save checksum file - \"$path_sha1\" - $reason"
+                        log "(this means that next time the package will be probably force re-downloaded)"
                     }
 
                     # expand the package, if it is an archive
@@ -1008,8 +1028,8 @@ namespace eval asup {
             file delete -force -- $launch_log_path
         }
 
-        puts stderr "JVM binary: $launch_jvm"
-        puts stderr "JVM argv: $launch_argv"
+        log "JVM binary: $launch_jvm"
+        log "JVM argv: $launch_argv"
 
         # run JVM with post-processed CLI arguments
         exec -ignorestderr -- $launch_jvm {*}$launch_argv >& $launch_log_path
@@ -1032,11 +1052,9 @@ if {$::argv0 == [info script]} {
     # read in CLI options to configure our behaviour accordingly
     asup::config_from_argv $::argv
 
-    puts -nonewline stderr [join [list $::asup::config(WM_TITLE_TK) \
-                                       version \
-                                       $::asup::config(CURRENT_VERSION) \
-                                       {}] { }]
-    puts stderr "(running on $::asup::config(CURRENT_OS)/$::asup::config(CURRENT_ARCH))\n"
+    asup::log [join [list $::asup::config(WM_TITLE_TK) \
+                          version $::asup::config(CURRENT_VERSION)] { }]
+    asup::log "(running on $::asup::config(CURRENT_OS)/$::asup::config(CURRENT_ARCH))\n"
 
     # obtain index.json contents first, since they contain basically everything
     # we need to work
@@ -1049,7 +1067,7 @@ if {$::argv0 == [info script]} {
             # TODO: perform update
             asup::update_ourselves $index_json
         } else {
-            puts stderr "Up-to-date (version v$::asup::config(CURRENT_VERSION))"
+            asup::log "Up-to-date (version v$::asup::config(CURRENT_VERSION))"
         }
     }
 

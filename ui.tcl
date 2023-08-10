@@ -222,6 +222,7 @@ namespace eval asup {
                 puts stderr "root = \"$root\""
 
                 if {[string length $root] > 0} {
+                    set root [file nativename $root]
                     set field_contr [join [list $wm_cname $field] .]
 
                     # set the entry control's value to the selected directory
@@ -360,7 +361,7 @@ namespace eval asup {
                 if {[string equal $key CURRENT_RAM_LIMIT]} {
                     # add the gigabyte postfix (TODO: get rid of this dirty
                     # hack later)
-                    set value [join [list $value G] {}]
+                    set value [join [list [expr {floor($value)}] G] {}]
                 }
 
                 # modify config values directly in the worker thread
@@ -459,6 +460,9 @@ namespace eval asup {
                 # can't run the main loop when used as a package themselves
                 return
             }
+
+            # on Micro$oft's OS, this leads to errors under MSVC-compiled Wish 8.6
+            asup::mt::try_enqueue { set asup::config(WHERE_TO_LOG) {} } tkvwait
 
             set current_requested_packages {}
             set current_multiroot default
