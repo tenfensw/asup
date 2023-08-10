@@ -1,6 +1,8 @@
 #!/usr/bin/env wish
 source mt.tcl
 
+package require canvas::gradient 0.2
+
 proc tkvwait {name} {
     tkwait variable $name
 }
@@ -9,6 +11,9 @@ namespace eval asup {
     namespace eval ui {
         # progress window and UI operations specs
         variable wm_info {}
+
+        # underlying progress bar control
+        variable wm_pb {}
 
         proc get_wm_info {} {
             variable wm_info
@@ -29,6 +34,45 @@ namespace eval asup {
         }
 
         proc init_stylish {wm_info} {
+            # make sure the window is borderless and non-resizable
+            wm overrideredirect . 1
+            wm resizable . 0 0
+
+            # make a gradiented canvas with the logo graphic
+            canvas .cnv -background black
+            canvas::gradient .cnv -direction r -color1 grey -color2 black
+
+            set wm_width [dict get $wm_info WM_W_TK]
+            set wm_height [dict get $wm_info WM_H_TK]
+
+            set logo_png_x [expr {$wm_width / 2}]
+            set logo_png_y [expr {$wm_height / 2}]
+
+            image create photo .logoPNG -file {logo.png}
+            .cnv create image $logo_png_x $logo_png_y -image .logoPNG
+
+            # make a faux progress bar
+            set pb_length [dict get $wm_info WM_L_TK]
+            set pb_y [expr {[dict get $wm_info WM_H_TK] - ($pb_length * 2)}]
+
+            variable wm_pb
+            set wm_pb [.cnv create line 0 $pb_y $wm_width $pb_y -fill white \
+                                                          -width $pb_length]
+            set wm_pb [list $wm_pb $pb_y]
+
+            # make a caption for the aforementioned progress bar
+            font create .cnvFP -family [dict get $wm_info WM_FONT_FAMILY_TK] \
+                               -size [dict get $wm_info WM_FONT_SIZE_TK]
+
+            # TODO: make the caption text coordinates more precise
+            set cp_y [expr {$pb_y - floor($pb_length * 1.2)}]
+            lappend wm_pb [.cnv create text 8 $cp_y -font .cnvFP \
+                                                    -text {Initializing...} \
+                                                    -anchor sw \
+                                                    -fill grey]
+
+            # add all the controls to the resulting window
+            pack .cnv -fill both -expand 1
         }
 
         proc check_for_updates {} {
@@ -63,12 +107,28 @@ namespace eval asup {
             set do_update_brief [expr {[string length $brief] > 0}]
 
             variable wm_info
+            variable wm_pb
 
             if {! [dict get $wm_info WM_STYLISH_TK]} {
-                .pbBar configure -value $percent
+                set pb_caption_contr [lindex $wm_pb 0]
+                set pb_contr [lindex $wm_pb 1]
+
+                $pb_contr configure -value $percent
 
                 if {$do_update_brief} {
-                    .pbCap configure -text $brief
+                    $pb_caption_contr configure -text $brief
+                }
+            } else {
+                variable wm_pb
+                set pb_y [lindex $wm_pb 1]
+                set pb_contr [lindex $wm_pb 0]
+
+                set pb_x [expr {ceil([dict get $wm_info WM_W_TK] / 100.0) * $percent}]
+                .cnv coords $pb_contr 0 $pb_y $pb_x $pb_y
+
+                if {$do_update_brief} {
+                    set pb_caption_contr [lindex $wm_pb end]
+                    .cnv itemconfigure $pb_caption_contr -text $brief
                 }
             }
         }
@@ -83,22 +143,26 @@ namespace eval asup {
             get_wm_info
             variable wm_info
 
+            # initialize a bare-bones window
+            wm title . [dict get $wm_info WM_TITLE_TK]
+
             if {[dict get $wm_info WM_STYLISH_TK]} {
-                # initialize a prettified UI window
+                # initialize prettified UI controls
                 init_stylish $wm_info
             } else {
-                # initialize a bare-bones window
-                wm title . [dict get $wm_info WM_TITLE_TK]
-                center_wm . $wm_info
-
                 # add a label and a progress bar to it (we have to use TTK since regular Tk
                 # controls are broken on micro$oft's OS)
-                ttk::label .pbCap -text {Initializing...}
-                ttk::progressbar .pbBar -mode indeterminate
+                variable wm_pb
+
+                lappend wm_pb [ttk::label .pbCap -text {Initializing...}]
+                lappend wm_pb [ttk::progressbar .pbBar -mode indeterminate]
 
                 # don't forget to add all these controls to the window properly
-                pack .pbCap .pbBar -fill x -padx 5 -pady 5
+                pack {*}$wm_pb -fill x -padx 5 -pady 5
             }
+
+            # adjust window dimensions regardless of its style
+            center_wm . $wm_info
 
             # make sure the window can't be quit that easily
             wm protocol . WM_DELETE_WINDOW {

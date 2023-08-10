@@ -84,6 +84,10 @@ namespace eval asup {
 
                         force-update { set flag {u} }
 
+                        pretty -
+                        stylish -
+                        ui { set flag {S} }
+
                         uri -
                         mirror { set flag {M} }
 
@@ -125,6 +129,8 @@ namespace eval asup {
 
                         set config($key) $value
                     }
+
+                    S { set config(WM_STYLISH_TK) 1 }
 
                     M { set config(INDEX_JSON) $operand }
                     C { set config(CURRENT_MULTIROOT) $operand }
