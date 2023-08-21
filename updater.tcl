@@ -22,7 +22,7 @@ namespace eval asup {
                            SHASUM_PATH "/usr/bin/shasum" \
                            \
                            CURRENT_ROOT "/tmp/aa" \
-                           CURRENT_VERSION {2023.08.02.4} \
+                           CURRENT_VERSION {2023.08.02.5} \
                            \
                            INDEX_JSON "https://valche.fun/asup/index.json" \
                            VAR_SPECIALS {_} \

@@ -93,7 +93,8 @@ namespace eval asup {
 
                 # ask the user if we maybe want to update now
                 if {[tk_messageBox -icon question -default yes \
-                                   -text $new_caption -type yesno]} {
+                                   -message $new_caption \
+                                   -type yesno]} {
                     # TODO: self-update
                 }
             }
@@ -267,9 +268,11 @@ namespace eval asup {
                         }
 
                         # make a numeric scale control
-                        set field_contr [ttk::scale $wm_cname.$field \
-                                                    -value $value \
-                                                    -from 1 -to 16]
+                        set field_contr [ttk::spinbox $wm_cname.$field \
+                                                      -from 1 -to 16 \
+                                                      -increment 1]
+                        $field_contr set $value
+
                         lappend result $field_contr
                     }
 
@@ -425,7 +428,7 @@ namespace eval asup {
                 if {[string equal $key CURRENT_RAM_LIMIT]} {
                     # add the gigabyte postfix (TODO: get rid of this dirty
                     # hack later)
-                    set value [join [list [expr {floor($value)}] G] {}]
+                    set value [join [list [expr {int($value)}] G] {}]
                 }
 
                 # modify config values directly in the worker thread
@@ -503,6 +506,9 @@ namespace eval asup {
             # try to launch the package
             asup::mt::set_var launch_name $name
             asup::mt::try_enqueue { asup::launch_package $index_json $launch_name } tkvwait
+
+            # terminate ourselves afterwards
+            deinit
         }
 
         proc read_ascii args {
