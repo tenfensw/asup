@@ -75,6 +75,31 @@ namespace eval asup {
             pack .cnv -fill both -expand 1
         }
 
+        proc update_ourselves {{is_dry_run 0}} {
+            if {! $is_dry_run} {
+                # perform self-update first
+                set old_version [asup::mt::try_enqueue \
+                                     { asup::update_ourselves $index_json } vwait]
+
+                # re-initialize the worker thread with a new version pre-loaded
+                asup::mt::deinit
+                asup::mt::init
+
+                # perform post-install commands first
+                asup::mt::try_enqueue [list set asup::config(PERFORM_POST_INSTALL) \
+                                                $old_version] vwait
+                asup::mt::try_enqueue { asup::perform_post_install } vwait
+            }
+
+            if {$::argv0 == [info script]} {
+                # don't forget to take CLI arguments into account, if necessary
+                asup::mt::try_enqueue [list asup::config_from_argv $::argv] vwait
+            }
+
+            # on Micro$oft's OS, this leads to errors under MSVC-compiled Wish 8.6
+            asup::mt::try_enqueue { set asup::config(WHERE_TO_LOG) {} } tkvwait
+        }
+
         proc check_for_updates {} {
             set_status 10 {Checking for updates...}
 
@@ -95,7 +120,7 @@ namespace eval asup {
                 if {[tk_messageBox -icon question -default yes \
                                    -message $new_caption \
                                    -type yesno]} {
-                    # TODO: self-update
+                    update_ourselves
                 }
             }
         }
@@ -135,10 +160,7 @@ namespace eval asup {
         }
 
         proc init {} {
-            if {$::argv0 == [info script]} {
-                # make sure we don't ignore the CLI args if we are running in standalone mode
-                asup::mt::try_enqueue [list asup::config_from_argv $::argv] vwait
-            }
+            update_ourselves 1
 
             # obtain UI-related info dictionary
             get_wm_info
@@ -530,9 +552,6 @@ namespace eval asup {
                 # can't run the main loop when used as a package themselves
                 return
             }
-
-            # on Micro$oft's OS, this leads to errors under MSVC-compiled Wish 8.6
-            asup::mt::try_enqueue { set asup::config(WHERE_TO_LOG) {} } tkvwait
 
             set current_requested_packages {}
             set current_multiroot default

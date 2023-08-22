@@ -42,6 +42,8 @@ namespace eval asup {
                            \
                            USE_MT 0 \
                            \
+                           PERFORM_POST_INSTALL 0 \
+                           \
                            WM_TITLE_TK "Ascention Updater" \
                            WM_STYLISH_TK 0 \
                            \
@@ -136,12 +138,13 @@ namespace eval asup {
                     C { set config(CURRENT_MULTIROOT) $operand }
 
                     R { set config(CURRENT_ROOT) $operand }
+                    A { set config(PERFORM_POST_INSTALL) $operand }
 
                     v {
                         lappend config(CURL_FLAGS) {-v}
                     }
 
-                    [uUhH?] {
+                    [UhH?] {
                         # displays the help message and exists
                         if {! $config(USE_MT)} {
                             show_help
@@ -754,8 +757,42 @@ namespace eval asup {
         return 1
     }
 
+    # this procedure should be implemeted as time goes by in order to handle
+    # self-updates - probably, as part of the post-installation mechanism,
+    # newer dependencies or Tcl runtime might be fetched, for example
+    proc perform_post_install {} {
+        return 1
+    }
+
+    # performs self-update, if requested
     proc update_ourselves {index_json} {
-        return -code error "TODO: implement"
+        if {! [dict exists $index_json general latest]} {
+            return -code error "reference to latest version download URI unavailable"
+        }
+
+        set latest_tclsh [info nameofexecutable]
+        set latest_self [info script]
+
+        # TODO: avoid hard-coding own relative filename and make it somehow
+        # a preset in $::asup::config array
+        if {$latest_self == {}} {
+            set latest_self "updater.tcl"
+        }
+
+        # download and self-replace the latest version of the updater
+        set latest_uri [dict get $index_json general latest]
+        curl $latest_uri $latest_self
+
+        log "Latest version downloaded into $latest_self from $latest_uri"
+
+        # maybe perform some post-install initialization on our end
+        variable config
+        if {! $config(USE_MT)} {
+            exec -ignorestderr -- $latest_tclsh $latest_self \
+                                        [join [list {-A} $config(CURRENT_VERSION)] {}]
+        }
+
+        return $config(CURRENT_VERSION)
     }
 
     proc download_package {index_json name} {
@@ -1062,6 +1099,12 @@ if {$::argv0 == [info script]} {
                           version $::asup::config(CURRENT_VERSION)] { }]
     asup::log "(running on $::asup::config(CURRENT_OS)/$::asup::config(CURRENT_ARCH))\n"
 
+    # there might be some post-installation work to do if requested
+    if {$::asup::config(PERFORM_POST_INSTALL) != 0} {
+        asup::perform_post_install
+        exit 0
+    }
+
     # obtain index.json contents first, since they contain basically everything
     # we need to work
     set index_json [asup::get_index_json]
@@ -1070,8 +1113,10 @@ if {$::argv0 == [info script]} {
     if {$::asup::config(CAN_CHECK_FOR_UPDATES)} {
         # make sure we are running the latest version of the updater
         if {! [asup::is_latest $index_json]} {
-            # TODO: perform update
+            # update ourselves first
             asup::update_ourselves $index_json
+
+            # TODO: relaunch ourselves somehow in a correct manner
         } else {
             asup::log "Up-to-date (version v$::asup::config(CURRENT_VERSION))"
         }
