@@ -21,8 +21,11 @@ namespace eval asup {
                            TAR_PATH "/usr/bin/tar" \
                            SHASUM_PATH "/usr/bin/shasum" \
                            \
+                           UNZIP_PATH "/usr/bin/unzip" \
+                           USE_TAR_INSTEAD_OF_UNZIP 0 \
+                           \
                            CURRENT_ROOT "/tmp/aa" \
-                           CURRENT_VERSION {2023.08.02.5} \
+                           CURRENT_VERSION {2023.08.24.1} \
                            \
                            INDEX_JSON "https://valche.fun/asup/index.json" \
                            VAR_SPECIALS {_} \
@@ -148,7 +151,7 @@ namespace eval asup {
                         # displays the help message and exists
                         if {! $config(USE_MT)} {
                             show_help
-                            exit 1
+                            exit 0
                         }
                     }
 
@@ -173,6 +176,7 @@ namespace eval asup {
             set curl_path [join [list $prefix_root cURL 7.88.1 bin curl.exe] /]
             set tar_path [join [list $prefix_root BSDtar bin bsdtar.exe] /]
 
+            set unzip_path [join [list $root unzip.exe] /]
             set shasum_path [join [list $prefix_root sha1sum.exe] /]
 
             set current_root [join [list $::env(APPDATA) Ascention] /]
@@ -180,11 +184,13 @@ namespace eval asup {
             array set config [list CURL_PATH [file nativename $curl_path] \
                                    TAR_PATH [file nativename $tar_path] \
                                    \
+                                   UNZIP_PATH [file nativename $unzip_path] \
                                    SHASUM_PATH [file nativename $shasum_path] \
                                    \
                                    CURRENT_ROOT [file nativename $current_root] \
                                    CONFIG_PATH [file nativename $config_path] \
                                    \
+                                   USE_TAR_INSTEAD_OF_UNZIP 0 \
                                    CURRENT_OS win32]
         }
     }
@@ -503,7 +509,18 @@ namespace eval asup {
         set expansion_relevant 1
         set expansion_flag {}
 
+        set use_zip 0
+
+        variable config
         switch -glob -nocase -- [file extension $path] {
+            .zip {
+                if {$config(USE_TAR_INSTEAD_OF_UNZIP)} {
+                    set expansion_flag {}
+                } else {
+                    set use_zip 1
+                }
+            }
+
             .*gz { set expansion_flag z }
             .*bz2 { set expansion_flag j }
             .*xz { set expansion_flag J }
@@ -524,13 +541,13 @@ namespace eval asup {
 
             log "Extracting in progress, this might take a while... (path = \"$path\")"
 
-            variable config
-            if {[catch {exec -ignorestderr -- $config(TAR_PATH) \
-                                                        -C $target_root \
-                                                        [join [list {-} x $expansion_flag f] {}] \
-                                                        $path} reason]} {
-                log "Warning! extracting \"$path\" failed - $reason"
-                return 0
+            if {$use_zip} {
+                exec -ignorestderr -- $config(UNZIP_PATH) -qq $path \
+                                                          -d $target_root
+            } else {
+                exec -ignorestderr -- $config(TAR_PATH) -C $target_root \
+                                         [join [list {-} x $expansion_flag f] {}] \
+                                         $path
             }
         }
 
@@ -879,6 +896,11 @@ namespace eval asup {
 
                     log "Verification completed!"
 
+                    # expand the package, if it is an archive
+                    if {[try_expand $path $config(CURRENT_ROOT)]} {
+                        file delete -force -- $path
+                    }
+
                     # cache the checksum (since this is the way we'll be checking
                     # whether the installed package is up to date or not)
                     if {[catch {
@@ -892,11 +914,6 @@ namespace eval asup {
                     } reason]} {
                         log "Warning! Failed to save checksum file - \"$path_sha1\" - $reason"
                         log "(this means that next time the package will be probably force re-downloaded)"
-                    }
-
-                    # expand the package, if it is an archive
-                    if {[try_expand $path $config(CURRENT_ROOT)]} {
-                        file delete -force -- $path
                     }
                 }
             }
