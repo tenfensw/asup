@@ -25,7 +25,7 @@ namespace eval asup {
                            USE_TAR_INSTEAD_OF_UNZIP 0 \
                            \
                            CURRENT_ROOT "/tmp/aa" \
-                           CURRENT_VERSION {2023.08.24.1} \
+                           CURRENT_VERSION {2023.08.24.2} \
                            \
                            INDEX_JSON "https://valche.fun/asup/index.json" \
                            VAR_SPECIALS {_} \
@@ -542,7 +542,7 @@ namespace eval asup {
             log "Extracting in progress, this might take a while... (path = \"$path\")"
 
             if {$use_zip} {
-                exec -ignorestderr -- $config(UNZIP_PATH) -qq $path \
+                exec -ignorestderr -- $config(UNZIP_PATH) -qq -o $path \
                                                           -d $target_root
             } else {
                 exec -ignorestderr -- $config(TAR_PATH) -C $target_root \
